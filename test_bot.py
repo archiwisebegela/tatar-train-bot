@@ -8,6 +8,29 @@ class FakeAPI:
     def call(self, method, **data): self.calls.append((method,data))
 
 class Tests(unittest.TestCase):
+    def test_persistent_store_migrates_legacy_once(self):
+        import uuid
+        from pathlib import Path
+        from unittest.mock import patch
+        import bot
+        root=Path(__file__).resolve().parent/('test-data-'+uuid.uuid4().hex)
+        root.mkdir()
+        try:
+            old=Store(root/'progress.sqlite3')
+            old.user(42,'2026-10-13')
+            old.db.close()
+            with patch.object(bot,'ROOT',root),patch.dict(bot.os.environ,{'DATA_DIR':str(root/'data')}):
+                new=bot.open_store()
+                self.assertEqual(new.db.execute('SELECT COUNT(*) FROM users').fetchone()[0],1)
+                new.user(43,'2026-10-14');new.db.close()
+                reopened=bot.open_store()
+                self.assertEqual(reopened.db.execute('SELECT COUNT(*) FROM users').fetchone()[0],2)
+                reopened.db.close()
+        finally:
+            for file in (root/'progress.sqlite3',root/'data'/'progress.sqlite3'):
+                if file.exists(): file.unlink()
+            if (root/'data').exists(): (root/'data').rmdir()
+            root.rmdir()
     def test_grammar_navigation_preserves_progress(self):
         from grammar import PAGES
         s=Store(':memory:'); api=FakeAPI(); b=Bot(s,api)

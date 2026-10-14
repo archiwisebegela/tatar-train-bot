@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 if (ROOT / '.env').exists():
     for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines():
         key, sep, value = line.partition('=')
-        if sep and key.strip() in ('TELEGRAM_BOT_TOKEN', 'UTC_OFFSET'):
+        if sep and key.strip() in ('TELEGRAM_BOT_TOKEN', 'BOT_TOKEN', 'UTC_OFFSET', 'DATA_DIR'):
             os.environ.setdefault(key.strip(), value.strip().strip('\"').strip("'"))
 # Fixed UTC+3 avoids dependence on Windows timezone databases.
 TZ = dt.timezone(dt.timedelta(hours=int(os.getenv('UTC_OFFSET', '3'))))
@@ -201,15 +201,35 @@ class Bot:
             self.store.db.execute('UPDATE users SET reminded=? WHERE id=?',(now.date().isoformat(),row['id']))
             self.store.db.commit()
 
+def open_store():
+    data=Path(os.getenv('DATA_DIR',str(ROOT/'data')))
+    data.mkdir(parents=True,exist_ok=True)
+    target=data/'progress.sqlite3'
+    legacy=ROOT/'progress.sqlite3'
+    if not target.exists() and legacy.exists():
+        old=sqlite3.connect(legacy)
+        new=sqlite3.connect(target)
+        try:
+            old.backup(new)
+        finally:
+            new.close()
+            old.close()
+    return Store(target)
+
 def main():
-    token=os.getenv('TELEGRAM_BOT_TOKEN')
+    logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
+    token=os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('BOT_TOKEN')
     if not token:
         raise SystemExit('Set TELEGRAM_BOT_TOKEN before starting. See README.md.')
-    store=Store(ROOT/'progress.sqlite3')
+    store=open_store()
     bot=Bot(store,Telegram(token))
+    me=bot.api.call('getMe')
+    logging.info('Starting @%s, bot v2; data directory ready',me['username'])
+    if bot.api.call('getWebhookInfo').get('url'):
+        raise SystemExit('Webhook is configured; disable it before polling.')
     saved=store.db.execute("SELECT value FROM meta WHERE key='offset'").fetchone()
     offset=saved[0] if saved else 0
-    logging.basicConfig(level=logging.INFO)
+    backoff=5
     while True:
         try:
             bot.remind(dt.datetime.now(TZ))
@@ -219,9 +239,12 @@ def main():
                 offset=update['update_id']+1
                 store.db.execute("INSERT OR REPLACE INTO meta VALUES('offset',?)",(offset,))
                 store.db.commit()
-        except (RuntimeError,TimeoutError,OSError):
-            logging.warning('Connection interrupted; retrying in 5 seconds.')
-            time.sleep(5)
+            backoff=5
+        except (RuntimeError,TimeoutError,OSError) as exc:
+            reason=str(exc) if isinstance(exc,RuntimeError) else type(exc).__name__
+            logging.warning('%s; retry in %ss',reason,backoff)
+            time.sleep(backoff)
+            backoff=min(backoff*2,60)
 
 if __name__=='__main__':
     main()
