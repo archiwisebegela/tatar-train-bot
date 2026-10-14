@@ -30,6 +30,9 @@ class Store:
         CREATE TABLE IF NOT EXISTS days(user INTEGER, day TEXT, level INTEGER, questions TEXT,
           position INTEGER DEFAULT 0, correct INTEGER DEFAULT 0, PRIMARY KEY(user,day));
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value INTEGER);
+        CREATE TABLE IF NOT EXISTS practice(id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user INTEGER, day TEXT, level INTEGER, questions TEXT,
+          position INTEGER DEFAULT 0, correct INTEGER DEFAULT 0);
         ''')
     def user(self, uid, today):
         self.db.execute('INSERT OR IGNORE INTO users(id,joined) VALUES(?,?)', (uid, today))
@@ -43,7 +46,7 @@ class Store:
         return self.db.execute('SELECT * FROM days WHERE user=? AND day=?',(uid,today)).fetchone()
     def answer(self, uid, today, position, choice):
         row = self.day(uid,today)
-        if row['position'] != position or position >= 20:
+        if row['position'] != position or not 0 <= position < 20:
             return None
         q = json.loads(row['questions'])[position]
         if choice not in range(len(q['choices'])):
@@ -54,6 +57,34 @@ class Store:
                         (score,uid,today))
         if position == 19 and score >= 16:
             self.db.execute('UPDATE users SET level=? WHERE id=?',(min(row['level']+1,len(UNITS)-1),uid))
+        self.db.commit()
+        return ok,q
+    def practice(self, uid, today):
+        daily=self.day(uid,today)
+        if daily['position']<20:
+            return None
+        row=self.db.execute('SELECT * FROM practice WHERE user=? AND day=? ORDER BY id DESC LIMIT 1',
+                            (uid,today)).fetchone()
+        if row is not None and row['position']<20:
+            return row
+        number=self.db.execute('SELECT COUNT(*) FROM practice WHERE user=? AND day=?',
+                               (uid,today)).fetchone()[0]+1
+        questions=lesson(daily['level'],f'{uid}:{today}:practice:{number}')
+        cur=self.db.execute('INSERT INTO practice(user,day,level,questions) VALUES(?,?,?,?)',
+                            (uid,today,daily['level'],json.dumps(questions,ensure_ascii=False)))
+        self.db.commit()
+        return self.db.execute('SELECT * FROM practice WHERE id=?',(cur.lastrowid,)).fetchone()
+    def practice_answer(self, uid, today, session, position, choice):
+        row=self.db.execute('SELECT * FROM practice WHERE id=? AND user=? AND day=?',
+                            (session,uid,today)).fetchone()
+        if row is None or row['position']!=position or not 0<=position<20:
+            return None
+        q=json.loads(row['questions'])[position]
+        if choice not in range(len(q['choices'])):
+            return None
+        ok=choice==q['correct']
+        self.db.execute('UPDATE practice SET position=position+1,correct=correct+? WHERE id=?',
+                        (int(ok),session))
         self.db.commit()
         return ok,q
     def due(self, now):
@@ -100,6 +131,7 @@ class Bot:
     def menu(self, uid):
         self.send(uid,'Главное меню',keyboard([
             [('📚 Задания на сегодня','/learn')],
+            [('💪 Практиковать дальше','/practice')],
             [('📖 Грамматика','/grammar'),('📊 Прогресс','/progress')],
             [('🔕 Без напоминаний','/pause'),('🔔 Напоминать','/resume')]]))
     def grammar(self, uid, page=None):
@@ -124,7 +156,8 @@ class Bot:
                 message += '\nНачальный курс завершён! Следующие дни — закрепление последней темы.'
             else:
                 message += '\nЗавтра откроется следующая тема!'
-            return self.send(uid,message)
+            return self.send(uid,message,keyboard([
+                [('💪 Практиковать дальше · ещё 20','/practice')], [('🏠 Меню','/menu')]]))
         q = json.loads(row['questions'])[row['position']]
         text = f"📚 {UNITS[row['level']][0]} · {row['position']+1}/20\n\n{q['prompt']}"
         if row['position'] == 0:
@@ -132,6 +165,16 @@ class Bot:
         buttons = [[(label,f"a:{today}:{row['position']}:{i}")] for i,label in enumerate(q['choices'])]
         buttons.append([('📖 Грамматика','/grammar'),('🏠 Меню','/menu')])
         self.send(uid,text,keyboard(buttons))
+    def show_practice(self, uid, today):
+        row=self.store.practice(uid,today)
+        if row is None:
+            return self.send(uid,'Сначала выполните дневную норму — 20 заданий.',
+                             keyboard([[('Продолжить норму','/learn')]]))
+        q=json.loads(row['questions'])[row['position']]
+        self.send(uid,f"💪 Дополнительная практика · {UNITS[row['level']][0]}\n"
+                  f"Задание {row['position']+1}/20\n\n{q['prompt']}",keyboard(
+                      [[(label,f"p:{row['id']}:{row['position']}:{i}")]
+                       for i,label in enumerate(q['choices'])]+[[('🏠 Меню','/menu')]]))
     def handle(self, update, now):
         today = now.date().isoformat()
         cb = update.get('callback_query')
@@ -145,7 +188,28 @@ class Bot:
         action = cb.get('data','') if cb else msg.get('text','').split('@')[0].strip()
         if cb:
             self.api.call('answerCallbackQuery',callback_query_id=cb['id'])
-        if action.startswith('a:'):
+        if action=='/practice':
+            self.show_practice(uid,today)
+        elif action.startswith('p:'):
+            try:
+                _,session,pos,choice=action.split(':')
+                result=self.store.practice_answer(uid,today,int(session),int(pos),int(choice))
+            except (ValueError,IndexError):
+                result=None
+            if result is None:
+                self.send(uid,'Этот ответ уже принят или задание устарело.',
+                          keyboard([[('Продолжить практику','/practice')]]))
+            else:
+                ok,q=result
+                feedback=('✅ Верно! ' if ok else '❌ Правильный ответ: ')+q['explanation']
+                row=self.store.db.execute('SELECT * FROM practice WHERE id=?',(int(session),)).fetchone()
+                if row['position']==20:
+                    feedback+=f"\n\n✅ Блок практики завершён: {row['correct']}/20 верных.\nМожно пройти ещё 20 — сколько угодно раз!"
+                    label='💪 Практиковать дальше · ещё 20'
+                else:
+                    label='Дальше →'
+                self.send(uid,feedback,keyboard([[(label,'/practice')],[('🏠 Меню','/menu')]]))
+        elif action.startswith('a:'):
             try:
                 _,day,pos,choice=action.split(':')
                 result = self.store.answer(uid,today,int(pos),int(choice)) if day==today else None
@@ -183,9 +247,12 @@ class Bot:
         elif action=='/progress':
             row=self.store.day(uid,today)
             completed=self.store.db.execute('SELECT COUNT(*) FROM days WHERE user=? AND position=20',(uid,)).fetchone()[0]
+            extra=self.store.db.execute('SELECT COALESCE(SUM(position),0),COALESCE(SUM(correct),0) FROM practice WHERE user=? AND day=?',
+                                       (uid,today)).fetchone()
             self.send(uid,f"Сегодня: {row['position']}/20. Верно: {row['correct']}.\n"
-                      f"Тема: {UNITS[row['level']][0]}. Завершено дней: {completed}.",
-                      keyboard([[('Продолжить','/learn')]]))
+                      f"Тема: {UNITS[row['level']][0]}. Завершено дней: {completed}.\n"
+                      f"Дополнительная практика сегодня: {extra[0]} заданий, {extra[1]} верных.",
+                      keyboard([[('Продолжить','/learn')],[('💪 Практиковать дальше','/practice')]]))
         else:
             self.menu(uid)
     def remind(self, now):

@@ -8,6 +8,38 @@ class FakeAPI:
     def call(self, method, **data): self.calls.append((method,data))
 
 class Tests(unittest.TestCase):
+    def test_unlimited_practice_keeps_daily_progress(self):
+        import json
+        s=Store(':memory:');today='2026-10-14'
+        self.assertIsNone(s.practice(1,today))
+        for i,q in enumerate(json.loads(s.day(1,today)['questions'])):
+            s.answer(1,today,i,q['correct'])
+        level=s.user(1,today)['level']
+        ids=[]
+        for block in range(3):
+            row=s.practice(1,today);ids.append(row['id'])
+            self.assertEqual(s.practice(1,today)['id'],row['id'])
+            questions=json.loads(row['questions'])
+            for i,q in enumerate(questions):
+                self.assertIsNone(s.practice_answer(2,today,row['id'],i,q['correct']))
+                self.assertIsNone(s.practice_answer(1,'2026-10-15',row['id'],i,q['correct']))
+                self.assertIsNotNone(s.practice_answer(1,today,row['id'],i,q['correct']))
+                self.assertIsNone(s.practice_answer(1,today,row['id'],i,q['correct']))
+        self.assertEqual(len(set(ids)),3)
+        self.assertEqual(s.day(1,today)['position'],20)
+        self.assertEqual(s.user(1,today)['level'],level)
+        self.assertEqual(s.db.execute('SELECT SUM(position) FROM practice').fetchone()[0],60)
+    def test_practice_end_offers_another_block(self):
+        import json
+        s=Store(':memory:');api=FakeAPI();b=Bot(s,api);today='2026-10-14'
+        s.day(1,today);s.db.execute('UPDATE days SET position=20');s.db.commit()
+        row=s.practice(1,today);questions=json.loads(row['questions'])
+        for i,q in enumerate(questions):
+            b.handle({'callback_query':{'id':str(i),'from':{'id':1},
+                'data':f"p:{row['id']}:{i}:{q['correct']}",'message':{'chat':{'id':1,'type':'private'}}}},
+                dt.datetime(2026,10,14,tzinfo=TZ))
+        self.assertIn('Блок практики завершён',api.calls[-1][1]['text'])
+        self.assertEqual(api.calls[-1][1]['reply_markup']['inline_keyboard'][0][0]['callback_data'],'/practice')
     def test_persistent_store_migrates_legacy_once(self):
         import uuid
         from pathlib import Path
