@@ -1,0 +1,65 @@
+import datetime as dt
+import unittest
+from bot import Store, Bot, TZ
+from course import lesson, UNITS
+
+class FakeAPI:
+    def __init__(self): self.calls=[]
+    def call(self, method, **data): self.calls.append((method,data))
+
+class Tests(unittest.TestCase):
+    def test_grammar_navigation_preserves_progress(self):
+        from grammar import PAGES
+        s=Store(':memory:'); api=FakeAPI(); b=Bot(s,api)
+        now=dt.datetime(2026,10,13,tzinfo=TZ)
+        s.day(1,'2026-10-13')
+        for action in ['/start','/grammar']+[f'g:{i}' for i in range(len(PAGES))]+['g:999','g:bad','/menu']:
+            b.handle({'message':{'chat':{'id':1,'type':'private'},'text':action}},now)
+        self.assertEqual(s.day(1,'2026-10-13')['position'],0)
+        for method,data in api.calls:
+            if method=='sendMessage':
+                self.assertLess(len(data['text']),4096)
+                for row in data.get('reply_markup',{}).get('inline_keyboard',[]):
+                    for button in row:
+                        self.assertLessEqual(len(button['callback_data'].encode()),64)
+    def test_content(self):
+        for level in range(len(UNITS)):
+            questions=lesson(level,'test')
+            self.assertEqual(len(questions),20)
+            for q in questions:
+                self.assertEqual(len(set(q['choices'])),4)
+                self.assertIn(q['correct'],range(4))
+    def test_completion_and_duplicate(self):
+        s=Store(':memory:'); day='2026-10-13'
+        questions=__import__('json').loads(s.day(1,day)['questions'])
+        for i,q in enumerate(questions):
+            self.assertIsNotNone(s.answer(1,day,i,q['correct']))
+            self.assertIsNone(s.answer(1,day,i,q['correct']))
+        self.assertEqual(s.day(1,day)['position'],20)
+        self.assertEqual(s.user(1,day)['level'],1)
+        self.assertEqual(s.day(1,'2026-10-14')['level'],1)
+    def test_failure_keeps_level(self):
+        s=Store(':memory:'); day='2026-10-13'
+        questions=__import__('json').loads(s.day(1,day)['questions'])
+        for i,q in enumerate(questions): s.answer(1,day,i,(q['correct']+1)%4)
+        self.assertEqual(s.user(1,day)['level'],0)
+    def test_reminder_once_and_pause(self):
+        s=Store(':memory:'); s.user(1,'2026-10-12')
+        api=FakeAPI(); b=Bot(s,api)
+        self.assertEqual(s.due(dt.datetime(2026,10,13,18,tzinfo=TZ)),[])
+        now=dt.datetime(2026,10,13,19,tzinfo=TZ)
+        b.remind(now); b.remind(now)
+        self.assertEqual(len(api.calls),1)
+        s.db.execute('UPDATE users SET paused=1'); s.db.commit()
+        self.assertEqual(s.due(now+dt.timedelta(days=1)),[])
+    def test_completed_yesterday_no_reminder(self):
+        s=Store(':memory:'); s.day(1,'2026-10-12')
+        s.db.execute('UPDATE days SET position=20'); s.db.commit()
+        self.assertEqual(s.due(dt.datetime(2026,10,13,19,tzinfo=TZ)),[])
+    def test_stale_callback(self):
+        s=Store(':memory:'); api=FakeAPI(); b=Bot(s,api)
+        b.handle({'callback_query':{'id':'1','from':{'id':1},'data':'a:2026-10-12:0:0',
+                  'message':{'chat':{'id':1,'type':'private'}}}},dt.datetime(2026,10,13,tzinfo=TZ))
+        self.assertEqual(s.day(1,'2026-10-13')['position'],0)
+
+if __name__=='__main__': unittest.main()
