@@ -69,9 +69,10 @@ class Store:
             return row
         number=self.db.execute('SELECT COUNT(*) FROM practice WHERE user=? AND day=?',
                                (uid,today)).fetchone()[0]+1
-        questions=lesson(daily['level'],f'{uid}:{today}:practice:{number}')
+        level=self.user(uid,today)['level']
+        questions=lesson(level,f'{uid}:{today}:practice:{number}')
         cur=self.db.execute('INSERT INTO practice(user,day,level,questions) VALUES(?,?,?,?)',
-                            (uid,today,daily['level'],json.dumps(questions,ensure_ascii=False)))
+                            (uid,today,level,json.dumps(questions,ensure_ascii=False)))
         self.db.commit()
         return self.db.execute('SELECT * FROM practice WHERE id=?',(cur.lastrowid,)).fetchone()
     def practice_answer(self, uid, today, session, position, choice):
@@ -85,6 +86,9 @@ class Store:
         ok=choice==q['correct']
         self.db.execute('UPDATE practice SET position=position+1,correct=correct+? WHERE id=?',
                         (int(ok),session))
+        if position==19 and row['correct']+int(ok)>=16:
+            self.db.execute('UPDATE users SET level=? WHERE id=?',
+                            (min(row['level']+1,len(UNITS)-1),uid))
         self.db.commit()
         return ok,q
     def due(self, now):
@@ -151,11 +155,11 @@ class Bot:
         if row['position'] == 20:
             message = f"✅ Норма выполнена: 20/20. Верных ответов: {row['correct']}/20."
             if row['correct'] < 16:
-                message += '\nЗавтра закрепим эту тему: для перехода нужно 16 верных ответов.'
+                message += '\nПродолжите практику, чтобы закрепить тему: для перехода нужно 16 верных ответов.'
             elif row['level'] == len(UNITS)-1:
-                message += '\nНачальный курс завершён! Следующие дни — закрепление последней темы.'
+                message += '\nНачальный курс завершён! Можно закреплять последнюю тему.'
             else:
-                message += '\nЗавтра откроется следующая тема!'
+                message += '\nСледующая тема уже открыта — нажмите «Практиковать дальше»!'
             return self.send(uid,message,keyboard([
                 [('💪 Практиковать дальше · ещё 20','/practice')], [('🏠 Меню','/menu')]]))
         q = json.loads(row['questions'])[row['position']]
@@ -205,6 +209,10 @@ class Bot:
                 row=self.store.db.execute('SELECT * FROM practice WHERE id=?',(int(session),)).fetchone()
                 if row['position']==20:
                     feedback+=f"\n\n✅ Блок практики завершён: {row['correct']}/20 верных.\nМожно пройти ещё 20 — сколько угодно раз!"
+                    if row['correct']>=16 and row['level']<len(UNITS)-1:
+                        feedback+='\nСледующая тема открыта!'
+                    elif row['correct']<16:
+                        feedback+='\nСледующий блок закрепит эту тему. Для перехода нужно 16 верных ответов.'
                     label='💪 Практиковать дальше · ещё 20'
                 else:
                     label='Дальше →'

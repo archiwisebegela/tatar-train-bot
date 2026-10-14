@@ -27,7 +27,8 @@ class Tests(unittest.TestCase):
                 self.assertIsNone(s.practice_answer(1,today,row['id'],i,q['correct']))
         self.assertEqual(len(set(ids)),3)
         self.assertEqual(s.day(1,today)['position'],20)
-        self.assertEqual(s.user(1,today)['level'],level)
+        self.assertEqual(s.user(1,today)['level'],min(level+3,len(UNITS)-1))
+        self.assertEqual([r[0] for r in s.db.execute('SELECT level FROM practice ORDER BY id')],[1,2,3])
         self.assertEqual(s.db.execute('SELECT SUM(position) FROM practice').fetchone()[0],60)
     def test_practice_end_offers_another_block(self):
         import json
