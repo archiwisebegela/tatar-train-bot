@@ -47,6 +47,11 @@ UNIT_EN = [
  ('Numbers','Learn the numbers from one to ten.'),
  ('Food and home','Words for everyday life.'),
  ('First sentences','Мин means I; -м marks the first-person singular in these verbs.'),
+    ('My, your, our','Possession uses suffixes: өй means house; өем means my house.'),
+    ('Where, where to, where from','Direction: -га/-гә/-ка/-кә. Location: -да/-дә/-та/-тә. Origin: -дан/-дән/-тан/-тән.'),
+    ('Negation and existence','бармыйм means I do not go. Юк means there is no; түгел negates a noun predicate.'),
+    ('What happened yesterday','Definite past: -ды/-де or -ты/-те followed by a personal ending.'),
+    ('Conversation questions','Yes/no questions use -мы/-ме. Кайда means where; кайчан means when; нәрсә means what.'),
 ]
 VOCAB_EN = [
  ['Hi','Hello (formal)','Thank you','Please (request)','Bye','Goodbye','Yes','No','Good morning','Good evening'],
@@ -55,6 +60,16 @@ VOCAB_EN = [
  ['water','tea','milk','bread','apple','soup','house','door','window','book'],
  ['I am reading.','I am writing.','I am working.','I am learning Tatar.','I am drinking water.',
   'I am at home.','This is a book.','This is my mother.','What is your name?','My name is Alsu.'],
+ ['my book','your book (singular)','his / her book','our book','your book (plural / formal)',
+  'my house','your house (singular)','his / her house','our house','your house (plural / formal)'],
+ ['I go to school.','I study at school.','I return from school.','I return home.','I read at home.',
+  'I go to the shop.','I work at the shop.','The book is on the table.','I live in Kazan.','I go to the city.'],
+ ['I am not going.','I am not coming.','I am not working.','I am not reading.','I am not writing.',
+  'I am not drinking water.','This is not a book.','I am not a teacher.','I have a book.','I do not have a book.'],
+ ['I went.','I came.','I returned.','I read (past).','I wrote.','I worked.','I drank water.',
+  'We went.','You came.','They returned.'],
+ ['Are you going?','Are you coming?','Are you working?','Are you reading?','Do you speak Tatar?',
+  'Where do you live?','Where do you work?','When will you come?','What is this?','Who is this?'],
 ]
 # Whole Russian phrases are replaced once; translated text is never translated again.
 for unit, translated, vocabulary in zip(UNITS, UNIT_EN, VOCAB_EN):
