@@ -8,6 +8,27 @@ class FakeAPI:
     def call(self, method, **data): self.calls.append((method,data))
 
 class Tests(unittest.TestCase):
+    def test_language_selection_keeps_progress_and_tatar(self):
+        from i18n import translate,GRAMMAR_EN
+        from grammar import PAGES
+        s=Store(':memory:');api=FakeAPI();b=Bot(s,api)
+        now=dt.datetime(2026,10,14,tzinfo=TZ)
+        def act(text):
+            b.handle({'message':{'chat':{'id':1,'type':'private'},'text':text}},now)
+        act('/learn');before=s.day(1,'2026-10-14')['position']
+        act('lang:en')
+        self.assertEqual(s.language(1),'en')
+        self.assertEqual(api.calls[-1][1]['text'],'Main menu')
+        self.assertEqual(s.day(1,'2026-10-14')['position'],before)
+        act('/learn')
+        self.assertIn('Choose the translation:',api.calls[-1][1]['text'])
+        self.assertEqual(translate('Мин язам.','en'),'Мин язам.')
+        self.assertEqual(translate('Выберите перевод: Я пишу.','en'),'Choose the translation: I am writing.')
+        self.assertEqual(len(GRAMMAR_EN),len(PAGES))
+        for i in range(len(PAGES)):
+            act(f'g:{i}')
+            self.assertIn(GRAMMAR_EN[i][0],api.calls[-1][1]['text'])
+        act('lang:ru');self.assertEqual(api.calls[-1][1]['text'],'Главное меню')
     def test_unlimited_practice_keeps_daily_progress(self):
         import json
         s=Store(':memory:');today='2026-10-14'

@@ -9,6 +9,7 @@ import urllib.request
 import urllib.error
 from course import UNITS, lesson
 from grammar import PAGES
+from i18n import translate, GRAMMAR_EN
 
 ROOT = Path(__file__).resolve().parent
 # Read local settings without requiring external libraries.
@@ -34,6 +35,12 @@ class Store:
           user INTEGER, day TEXT, level INTEGER, questions TEXT,
           position INTEGER DEFAULT 0, correct INTEGER DEFAULT 0);
         ''')
+        if 'language' not in [row[1] for row in self.db.execute('PRAGMA table_info(users)')]:
+            self.db.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'")
+            self.db.commit()
+    def language(self, uid):
+        row=self.db.execute('SELECT language FROM users WHERE id=?',(uid,)).fetchone()
+        return row['language'] if row else 'ru'
     def user(self, uid, today):
         self.db.execute('INSERT OR IGNORE INTO users(id,joined) VALUES(?,?)', (uid, today))
         self.db.commit()
@@ -128,23 +135,28 @@ class Bot:
     def __init__(self, store, api):
         self.store,self.api = store,api
     def send(self, uid, text, markup=None):
-        data = dict(chat_id=uid,text=text)
+        language=self.store.language(uid)
+        data = dict(chat_id=uid,text=translate(text,language))
         if markup:
-            data['reply_markup']=markup
+            data['reply_markup']={'inline_keyboard':[
+                [dict(button,text=translate(button['text'],language)) for button in row]
+                for row in markup['inline_keyboard']]}
         self.api.call('sendMessage',**data)
     def menu(self, uid):
         self.send(uid,'Главное меню',keyboard([
             [('📚 Задания на сегодня','/learn')],
             [('💪 Практиковать дальше','/practice')],
             [('📖 Грамматика','/grammar'),('📊 Прогресс','/progress')],
+            [('🌐 Язык бота / Language','/language')],
             [('🔕 Без напоминаний','/pause'),('🔔 Напоминать','/resume')]]))
     def grammar(self, uid, page=None):
+        pages=GRAMMAR_EN if self.store.language(uid)=='en' else PAGES
         if page is None:
-            rows=[[(title,f'g:{i}')] for i,(title,_) in enumerate(PAGES)]
+            rows=[[(title,f'g:{i}')] for i,(title,_) in enumerate(pages)]
             rows.append([('🏠 Главное меню','/menu')])
             self.send(uid,'📖 Основы татарской грамматики\nВыберите тему:',keyboard(rows))
         else:
-            title,body=PAGES[page]
+            title,body=pages[page]
             nav=[]
             if page>0: nav.append(('← Назад',f'g:{page-1}'))
             if page<len(PAGES)-1: nav.append(('Дальше →',f'g:{page+1}'))
@@ -192,7 +204,15 @@ class Bot:
         action = cb.get('data','') if cb else msg.get('text','').split('@')[0].strip()
         if cb:
             self.api.call('answerCallbackQuery',callback_query_id=cb['id'])
-        if action=='/practice':
+        if action=='/language':
+            self.send(uid,'Выберите язык бота / Choose the bot language:',
+                      keyboard([[('🇷🇺 Русский','lang:ru'),('🇬🇧 English','lang:en')]]))
+        elif action in ('lang:ru','lang:en'):
+            self.store.db.execute('UPDATE users SET language=? WHERE id=?',(action[5:],uid))
+            self.store.db.commit()
+            self.send(uid,'Язык сохранён.')
+            self.menu(uid)
+        elif action=='/practice':
             self.show_practice(uid,today)
         elif action.startswith('p:'):
             try:
