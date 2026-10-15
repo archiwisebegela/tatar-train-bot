@@ -76,9 +76,18 @@ class Tests(unittest.TestCase):
             with patch.object(bot,'ROOT',root),patch.dict(bot.os.environ,{'DATA_DIR':str(root/'data')}):
                 new=bot.open_store()
                 self.assertEqual(new.db.execute('SELECT COUNT(*) FROM users').fetchone()[0],1)
-                new.user(43,'2026-10-14');new.db.close()
+                new.user(43,'2026-10-14')
+                new.day(42,'2026-10-14')
+                new.db.execute('UPDATE days SET position=20,correct=20 WHERE user=42')
+                new.db.commit()
+                new.db.execute('UPDATE users SET level=1 WHERE id=42');new.db.commit()
+                session=new.practice(42,'2026-10-14')
+                new.db.execute('UPDATE practice SET position=20,correct=20 WHERE id=?',(session['id'],))
+                new.db.execute('UPDATE users SET level=0 WHERE id=42')
+                new.db.commit();new.db.close()
                 reopened=bot.open_store()
                 self.assertEqual(reopened.db.execute('SELECT COUNT(*) FROM users').fetchone()[0],2)
+                self.assertEqual(reopened.user(42,'2026-10-14')['level'],2)
                 reopened.db.close()
         finally:
             for file in (root/'progress.sqlite3',root/'data'/'progress.sqlite3'):

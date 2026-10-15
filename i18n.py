@@ -37,6 +37,9 @@ UI = {
  'Начать урок':'Start lesson', 'Язык бота':'Bot language',
  'Выберите язык бота / Choose the bot language:':'Выберите язык бота / Choose the bot language:',
  'Язык сохранён.':'Language saved.',
+ 'Открытая тема:':'Unlocked topic:',
+ 'Это последняя тема начального курса. Дальше доступно её повторение.':
+ 'This is the final topic of the starter course. You can continue reviewing it.',
 }
 UNIT_EN = [
  ('Greetings','Learn greetings and polite expressions.'),

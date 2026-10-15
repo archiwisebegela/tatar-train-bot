@@ -38,6 +38,15 @@ class Store:
         if 'language' not in [row[1] for row in self.db.execute('PRAGMA table_info(users)')]:
             self.db.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'")
             self.db.commit()
+        # Recover passed topics from older versions which recorded results but
+        # did not advance extra practice. Never move an existing user backwards.
+        self.db.execute('''UPDATE users SET level=MAX(level,MIN(?,COALESCE((
+          SELECT MAX(level+1) FROM (
+            SELECT user,level,position,correct FROM days
+            UNION ALL SELECT user,level,position,correct FROM practice
+          ) passed WHERE passed.user=users.id AND position=20 AND correct>=16
+        ),0)))''',(len(UNITS)-1,))
+        self.db.commit()
     def language(self, uid):
         row=self.db.execute('SELECT language FROM users WHERE id=?',(uid,)).fetchone()
         return row['language'] if row else 'ru'
@@ -63,7 +72,7 @@ class Store:
         self.db.execute('UPDATE days SET position=position+1,correct=? WHERE user=? AND day=?',
                         (score,uid,today))
         if position == 19 and score >= 16:
-            self.db.execute('UPDATE users SET level=? WHERE id=?',(min(row['level']+1,len(UNITS)-1),uid))
+            self.db.execute('UPDATE users SET level=MAX(level,?) WHERE id=?',(min(row['level']+1,len(UNITS)-1),uid))
         self.db.commit()
         return ok,q
     def practice(self, uid, today):
@@ -94,7 +103,7 @@ class Store:
         self.db.execute('UPDATE practice SET position=position+1,correct=correct+? WHERE id=?',
                         (int(ok),session))
         if position==19 and row['correct']+int(ok)>=16:
-            self.db.execute('UPDATE users SET level=? WHERE id=?',
+            self.db.execute('UPDATE users SET level=MAX(level,?) WHERE id=?',
                             (min(row['level']+1,len(UNITS)-1),uid))
         self.db.commit()
         return ok,q
@@ -231,6 +240,8 @@ class Bot:
                     feedback+=f"\n\n✅ Блок практики завершён: {row['correct']}/20 верных.\nМожно пройти ещё 20 — сколько угодно раз!"
                     if row['correct']>=16 and row['level']<len(UNITS)-1:
                         feedback+='\nСледующая тема открыта!'
+                    elif row['correct']>=16:
+                        feedback+='\nЭто последняя тема начального курса. Дальше доступно её повторение.'
                     elif row['correct']<16:
                         feedback+='\nСледующий блок закрепит эту тему. Для перехода нужно 16 верных ответов.'
                     label='💪 Практиковать дальше · ещё 20'
@@ -274,11 +285,13 @@ class Bot:
             self.send(uid,'Напоминания выключены.' if action=='/pause' else 'Напоминания включены.')
         elif action=='/progress':
             row=self.store.day(uid,today)
+            current=self.store.user(uid,today)['level']
             completed=self.store.db.execute('SELECT COUNT(*) FROM days WHERE user=? AND position=20',(uid,)).fetchone()[0]
             extra=self.store.db.execute('SELECT COALESCE(SUM(position),0),COALESCE(SUM(correct),0) FROM practice WHERE user=? AND day=?',
                                        (uid,today)).fetchone()
             self.send(uid,f"Сегодня: {row['position']}/20. Верно: {row['correct']}.\n"
                       f"Тема: {UNITS[row['level']][0]}. Завершено дней: {completed}.\n"
+                      f"Открытая тема: {current+1}/{len(UNITS)} — {UNITS[current][0]}.\n"
                       f"Дополнительная практика сегодня: {extra[0]} заданий, {extra[1]} верных.",
                       keyboard([[('Продолжить','/learn')],[('💪 Практиковать дальше','/practice')]]))
         else:
@@ -319,7 +332,7 @@ def main():
     store=open_store()
     bot=Bot(store,Telegram(token))
     me=bot.api.call('getMe')
-    logging.info('Starting @%s, bot v2; data directory ready',me['username'])
+    logging.info('Starting @%s, bot v3-language-progression; data directory ready',me['username'])
     if bot.api.call('getWebhookInfo').get('url'):
         raise SystemExit('Webhook is configured; disable it before polling.')
     saved=store.db.execute("SELECT value FROM meta WHERE key='offset'").fetchone()
